@@ -4,6 +4,7 @@
 #include "File.h"
 #include "Project.h"
 #include "filter.h"
+#include <map>
 
 struct androidconfig {
   struct target {
@@ -14,7 +15,7 @@ struct androidconfig {
     std::string sofoldername;
   };
   std::string compiler(const target &t) {
-    std::string accum = ndkpath + clangpp + " " + t.ccflags + " -sysroot " + ndkpath + sysroot;
+    std::string accum = ndkpath + clangpp + " " + t.ccflags + " -fPIC -isysroot " + ndkpath + sysroot;
     for (auto& p : t.systemincludepaths) {
       accum += " -I" + ndkpath + p;
     }
@@ -36,33 +37,33 @@ struct androidconfig {
   std::string apksigner(const std::string& apkName) {
     return "apksigner sign --ks ~/.ssh/keystore.jks --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --out apk/" + apkName + ".apk apk/unsigned_" + apkName + ".apk";
   }
-  const std::string ndkpath = "/home/pebi/android-ndk-r17b";
+  const std::string ndkpath = "/home/pebi/android-ndk-r18";
   const std::string clangpp = "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++";
   const std::string sysroot = "/sysroot";
   const std::string ldflags = "-shared -lc -ldl -llog -landroid -lc++_static -lc++abi";
   std::map<std::string, target> targets = { { "aarch64", {
-    { "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include/aarch64-linux-android" },
+    { "/sources/cxx-stl/llvm-libc++abi/include", "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include", "/sysroot/usr/include/aarch64-linux-android" },
     { "/platforms/android-28/arch-arm64/usr/lib", "/sources/cxx-stl/llvm-libc++/libs/arm64-v8a" },
     "-std=c++17 -target aarch64-linux-android -DANDROID",
     "/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin/aarch64-linux-android-ld",
     "arm64-v8a",
   } }, 
   { "armv7", {
-    { "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include/arm-linux-androideabi" },
+    { "/sources/cxx-stl/llvm-libc++abi/include", "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include", "/sysroot/usr/include/arm-linux-androideabi" },
     { "/platforms/android-28/arch-arm/usr/lib", "/sources/cxx-stl/llvm-libc++/libs/armeabi-v7a", "/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/arm-linux-androideabi/lib" },
     "-std=c++17 -target armv7-linux-android -DANDROID",
     "/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin/arm-linux-androideabi-ld",
     "armeabi-v7a",
   } },
   { "x86", {
-    { "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include/i686-linux-android" },
+    { "/sources/cxx-stl/llvm-libc++abi/include", "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include", "/sysroot/usr/include/i686-linux-android" },
     { "/platforms/android-28/arch-x86/usr/lib", "/sources/cxx-stl/llvm-libc++/libs/x86" },
     "-std=c++17 -target i686-linux-android -DANDROID",
     "/toolchains/x86-4.9/prebuilt/linux-x86_64/bin/i686-linux-android-ld",
     "x86",
   } }, 
   { "x86_64", {
-    { "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include/x86_64-linux-android" },
+    { "/sources/cxx-stl/llvm-libc++abi/include", "/sources/cxx-stl/llvm-libc++/include", "/sysroot/usr/include", "/sysroot/usr/include/x86_64-linux-android" },
     { "/platforms/android-28/arch-x86_64/usr/lib", "/sources/cxx-stl/llvm-libc++/libs/x86_64" },
     "-std=c++17 -target x86_64-linux-android -DANDROID",
     "/toolchains/x86_64-4.9/prebuilt/linux-x86_64/bin/x86_64-linux-android-ld",
@@ -167,12 +168,12 @@ void AndroidToolset::CreateCommandsFor(Project& project, Component& component) {
         pc = new PendingCommand(command);
       } else {
         outputFile = "so/" + p.second.sofoldername + "/" + getSoNameFor(component);
-        command = config.linker(p.second) + "-pthread -o " + outputFile.string();
+        command = config.linker(p.second) + " -o " + outputFile.string();
 
         for (auto& file : objects) {
           command += " " + file->path.string();
         }
-        command += " -Llib";
+        command += " -Llib/" + p.first;
         std::vector<std::vector<Component*>> linkDeps = GetTransitiveAllDeps(component);
         std::reverse(linkDeps.begin(), linkDeps.end());
         for (auto d : linkDeps) {
@@ -193,13 +194,13 @@ void AndroidToolset::CreateCommandsFor(Project& project, Component& component) {
               command += " -l" + d[1]->root.string();
             }
           } else {
-            command += " -Wl,--start-group";
+            command += " --start-group";
             for (auto& c : d) {
               if (c != &component) {
                 command += " -l" + c->root.string();
               }
             }
-            command += " -Wl,--end-group";
+            command += " --end-group";
           }
         }
         pc = new PendingCommand(command);
@@ -229,10 +230,10 @@ void AndroidToolset::CreateCommandsFor(Project& project, Component& component) {
     std::string outputName = component.root.filename().string();
     PendingCommand* pc = new PendingCommand(config.aapt(outputName, manifest));
     File* uapkfile = project.CreateFile(component, "apk/unsigned_" + outputName + ".apk");
-    pc->AddOutput(uapkfile);
     for (auto& file : libraries) {
       pc->AddInput(file);
     }
+    pc->AddOutput(uapkfile);
     pc->Check();
     component.commands.push_back(pc);
 
